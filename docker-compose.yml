@@ -1,0 +1,10 @@
+# openmedia-uploader
+# Lokales Testen mit docker compose up
+# Beispiel-ENV kopieren: cp .env.example .env
+
+services:
+  uploader:
+    build: .
+    env_file: .env
+    volumes:
+      - ./tmp:/opt/openmedia/tmp

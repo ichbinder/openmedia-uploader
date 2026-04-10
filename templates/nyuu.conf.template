@@ -1,0 +1,46 @@
+{
+  "servers": [
+    {
+      "host": "{{USENET_HOST_1}}",
+      "port": {{USENET_PORT_1}},
+      "user": "{{USENET_USER_1}}",
+      "password": "{{USENET_PASS_1}}",
+      "ssl": {{USENET_SSL_1}},
+      "connections": {{USENET_CONNS_1}},
+      "group": "{{USENET_GROUP_1}}"
+    },
+    {
+      "host": "{{USENET_HOST_2}}",
+      "port": {{USENET_PORT_2}},
+      "user": "{{USENET_USER_2}}",
+      "password": "{{USENET_PASS_2}}",
+      "ssl": {{USENET_SSL_2}},
+      "connections": {{USENET_CONNS_2}},
+      "group": "{{USENET_GROUP_2}}"
+    },
+    {
+      "host": "{{USENET_HOST_3}}",
+      "port": {{USENET_PORT_3}},
+      "user": "{{USENET_USER_3}}",
+      "password": "{{USENET_PASS_3}}",
+      "ssl": {{USENET_SSL_3}},
+      "connections": {{USENET_CONNS_3}},
+      "group": "{{USENET_GROUP_3}}"
+    }
+  ],
+  "from": "{{POSTER_NAME}}",
+  "obfuscate": {
+    "method": "uuid"
+  },
+  "nzb": {
+    "output": "{{NZB_OUTPUT_PATH}}",
+    "compression": true
+  },
+  "uploads": {
+    "connections": "total",
+    "checks": {
+      "connections": "all",
+      "tries": 3
+    }
+  }
+}

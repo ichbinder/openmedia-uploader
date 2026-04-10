@@ -17,7 +17,6 @@
 #   S3_BUCKET              S3 bucket name
 #   S3_ACCESS_KEY          S3 access key
 #   S3_SECRET_KEY          S3 secret key
-#   HETZNER_API_TOKEN      For VPS self-delete
 #   USENET_HOST_1/2/3      Usenet server hostnames
 #   USENET_PORT_1/2/3      Usenet server ports
 #   USENET_USER_1/2/3      Usenet usernames
@@ -53,7 +52,7 @@ validate_env() {
   local required=(
     JOB_HASH S3_KEY API_BASE_URL SERVICE_TOKEN
     S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY
-    HETZNER_API_TOKEN USENET_HOST_1 USENET_HOST_2 USENET_HOST_3
+    USENET_HOST_1 USENET_HOST_2 USENET_HOST_3
   )
   for var in "${required[@]}"; do
     [[ -z "${!var:-}" ]] && die "Missing required ENV: $var"
@@ -108,21 +107,6 @@ upload_nzb_to_s3() {
     --s3-secret-access-key "${S3_SECRET_KEY}" \
     || die "Failed to upload NZB to S3"
   echo "$s3_key"
-}
-
-# ── Helper: VPS self-delete ──────────────────────────────────────
-vps_self_delete() {
-  local instance_id
-  instance_id=$(curl -sf http://169.254.169.254/hetzner/v1/metadata/instance-id) || {
-    log "WARN: Could not determine VPS instance ID, skipping self-delete"
-    return
-  }
-
-  log "VPS self-delete: instance=${instance_id}"
-  curl -sf -X DELETE "https://api.hetzner.cloud/v1/servers/${instance_id}" \
-    -H "Authorization: Bearer ${HETZNER_API_TOKEN}" || {
-    log "WARN: VPS self-delete failed (instance=${instance_id})"
-  }
 }
 
 # ── Helper: upload to one provider via Nyuu ──────────────────────
@@ -363,8 +347,8 @@ main() {
   rm -rf "$part_dir"
   log "Temp files cleaned up"
 
-  # ── Step 9: VPS self-delete ────────────────────────────────────
-  vps_self_delete
+  # VPS deletion is handled by the API after PATCH /uploads/:id
+  # — no Hetzner credentials needed in the container.
 
   log "=========================================="
   log "Upload completed successfully"

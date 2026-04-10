@@ -17,6 +17,8 @@
 #   S3_BUCKET              S3 bucket name
 #   S3_ACCESS_KEY          S3 access key
 #   S3_SECRET_KEY          S3 secret key
+#   NZB_SERVICE_URL        NZB-Service base URL (e.g. https://nzb.nettoken.de)
+#   NZB_SERVICE_TOKEN      NZB-Service JWT token
 #   USENET_HOST_1/2/3      Usenet server hostnames
 #   USENET_PORT_1/2/3      Usenet server ports
 #   USENET_USER_1/2/3      Usenet usernames
@@ -52,6 +54,7 @@ validate_env() {
   local required=(
     JOB_HASH S3_KEY API_BASE_URL SERVICE_TOKEN
     S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY
+    NZB_SERVICE_URL NZB_SERVICE_TOKEN
     USENET_HOST_1 USENET_HOST_2 USENET_HOST_3
   )
   for var in "${required[@]}"; do
@@ -94,19 +97,38 @@ generate_uuid() {
   cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16
 }
 
-# ── Helper: upload NZB to S3 ─────────────────────────────────────
-upload_nzb_to_s3() {
+# ── Helper: hash NZB and upload to NZB-Service ──────────────────
+# Calculates sha256 hash of the NZB file, then uploads it to the
+# NZB-Service (openmedia-nzb) via HTTP PUT.
+# Outputs the hash (used as the NzbFile identifier in the DB).
+upload_nzb_to_nzb_service() {
   local nzb_file="$1"
-  local s3_key="nzb/${JOB_HASH}.nzb"
 
-  log "Uploading NZB to S3: ${s3_key}"
-  rclone copyto "$nzb_file" \
-    "s3:${S3_BUCKET}/${s3_key}" \
-    --s3-endpoint "${S3_ENDPOINT}" \
-    --s3-access-key-id "${S3_ACCESS_KEY}" \
-    --s3-secret-access-key "${S3_SECRET_KEY}" \
-    || die "Failed to upload NZB to S3"
-  echo "$s3_key"
+  # Calculate sha256 hash of the NZB file
+  local nzb_hash
+  nzb_hash=$(sha256sum "$nzb_file" | cut -d' ' -f1)
+  log "NZB hash: ${nzb_hash}"
+
+  # Upload to NZB-Service
+  local nzb_service_url="${NZB_SERVICE_URL:-https://nzb.nettoken.de}"
+  local upload_url="${nzb_service_url}/files/${nzb_hash}"
+
+  log "Uploading NZB to NZB-Service: ${upload_url}"
+  local http_code
+  http_code=$(curl -sf -w "%{http_code}" -X PUT \
+    -H "Authorization: Bearer ${NZB_SERVICE_TOKEN}" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@${nzb_file}" \
+    "${upload_url}" 2>/dev/null) || true
+
+  if [[ "$http_code" == "201" ]]; then
+    log "NZB uploaded to NZB-Service: ${nzb_hash}"
+  else
+    log "WARN: NZB-Service upload returned HTTP ${http_code} (expected 201)"
+    # Non-fatal — NZB is still available locally, API can still record the hash
+  fi
+
+  echo "$nzb_hash"
 }
 
 # ── Helper: upload to one provider via Nyuu ──────────────────────
@@ -331,24 +353,32 @@ main() {
   nzb_size=$(stat -c%s "$nzb_path" 2>/dev/null || stat -f%z "$nzb_path")
   log "Primary NZB: ${nzb_path} (${nzb_size} bytes)"
 
-  # ── Step 6: Upload NZB to S3 ───────────────────────────────────
-  local nzb_s3_key
-  nzb_s3_key=$(upload_nzb_to_s3 "$nzb_path")
+  # ── Step 6: Hash NZB and upload to NZB-Service ─────────────────
+  local nzb_hash
+  nzb_hash=$(upload_nzb_to_nzb_service "$nzb_path")
 
   # ── Step 7: Report completion to API ───────────────────────────
   local elapsed=$(( $(date +%s) - start_time ))
   log "Total upload time: ${elapsed}s"
 
+  # PATCH /uploads/:id with nzbHash and movieId (if available)
+  # movieId comes from the UploadJob — it tells the API which Movie
+  # to link the new NzbFile entry to.
+  local movie_id="${MOVIE_ID:-}"
+  local patch_body
+  patch_body=$(jq -n \
+    --arg status "completed" \
+    --arg nzbHash "$nzb_hash" \
+    --arg movieId "$movie_id" \
+    '{status: $status, nzbHash: $nzbHash} + (if $movieId != "" then {movieId: $movieId} else {} end)'
+  )
+
   curl -sf -X PATCH "${API_BASE_URL}/upload-jobs/${JOB_ID}" \
     -H "Authorization: Bearer ${SERVICE_TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --arg status "completed" \
-      --arg nzbS3Key "$nzb_s3_key" \
-      '{status: $status, nzbS3Key: $nzbS3Key}'
-    )" || log "WARN: API completion callback failed"
+    -d "$patch_body" || log "WARN: API completion callback failed"
 
-  log "API callback sent: status=completed, nzbS3Key=${nzb_s3_key}"
+  log "API callback sent: status=completed, nzbHash=${nzb_hash}, movieId=${movie_id:-none}"
 
   # ── Step 8: Cleanup temp files ─────────────────────────────────
   rm -rf "$part_dir"
@@ -359,8 +389,8 @@ main() {
 
   log "=========================================="
   log "Upload completed successfully"
-  log "Hash:     ${JOB_HASH:0:16}..."
-  log "NZB:      ${nzb_s3_key}"
+  log "NZB Hash: ${nzb_hash}"
+  log "Movie ID: ${movie_id:-none}"
   log "Parts:    ${part_count}"
   log "Providers: ${providers_ok}/${providers_failed}"
   log "Time:     ${elapsed}s"

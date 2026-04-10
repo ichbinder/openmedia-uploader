@@ -1,0 +1,15 @@
+language: en
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+  path_instructions:
+    - path: "scripts/**"
+      instructions: "Shell scripts must follow bash best practices. Check for missing error handling, unquoted variables, and race conditions in mkfifo pipelines."
+chat:
+  auto_reply: true

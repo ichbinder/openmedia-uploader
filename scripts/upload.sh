@@ -123,14 +123,36 @@ upload_to_provider() {
   local part_dir="${10}"
   local hash="${11}"
 
-  local ssl_flag=""
-  [[ "$ssl" == "1" ]] && ssl_flag="--ssl"
+  local ssl_flag=true
+  [[ "$ssl" == "0" ]] && ssl_flag=false
 
   local nzb_path="${part_dir}/${hash}_provider${provider_num}.nzb"
+  local conf_path="${part_dir}/nyuu_p${provider_num}.json"
+  local poster_email="uploader-$(openssl rand -hex 4)@upload.local"
 
   log "Provider ${provider_num}: ${host}:${port} (ssl=${ssl}, conns=${conns})"
   log "  Group: ${group}"
   log "  NZB:   ${nzb_path}"
+
+  # Generate Nyuu JSON config (obfuscation requires config, not CLI)
+  cat > "$conf_path" << CONF
+{
+  "host": "${host}",
+  "port": ${port},
+  "ssl": ${ssl_flag},
+  "user": "${user}",
+  "password": "${pass}",
+  "connections": ${conns},
+  "groups": "${group}",
+  "from": "${poster_email}",
+  "obfuscate": {"method": "uuid"},
+  "out": "${nzb_path}",
+  "overwrite": true,
+  "nzb-password": "${password}",
+  "check-connections": ${conns},
+  "check-tries": 3
+}
+CONF
 
   # Collect upload files (7z parts + PAR2 files), sorted
   local upload_files=()
@@ -145,22 +167,7 @@ upload_to_provider() {
 
   local nyuu_log="${part_dir}/nyuu_provider${provider_num}.log"
 
-  nyuu \
-    -h "$host" \
-    -P "$port" \
-    -u "$user" \
-    -p "$pass" \
-    $ssl_flag \
-    -n "$conns" \
-    -g "$group" \
-    -f "${POSTER_NAME:-$(generate_uuid)}" \
-    -o "$nzb_path" \
-    --obfuscate full \
-    --nzb-password "$password" \
-    --nzb-category "Movies" \
-    --check-connections all \
-    --check-tries 3 \
-    "${upload_files[@]}" 2>&1 | tee "$nyuu_log"
+  nyuu -C "$conf_path" "${upload_files[@]}" 2>&1 | tee "$nyuu_log"
 
   local exit_code=${PIPESTATUS[0]}
 

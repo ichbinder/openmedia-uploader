@@ -257,7 +257,7 @@ main() {
   local sevenz_pid=$!
 
   log "Starting rclone stream from S3"
-  rclone cat "s3:${S3_BUCKET}/${S3_KEY}" \
+  rclone cat ":s3:${S3_BUCKET}/${S3_KEY}" \
     --s3-endpoint "${S3_ENDPOINT}" \
     --s3-access-key-id "${S3_ACCESS_KEY}" \
     --s3-secret-access-key "${S3_SECRET_KEY}" \

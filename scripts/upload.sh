@@ -68,12 +68,12 @@ report_status() {
   local error="${2:-}"
   local body
   body=$(jq -n --arg status "$status" --arg error "$error" \
-    '{status: $status, error: (if $error == "" then null else $error end)}')
+    '{status: $status, error: (if $error == "" then null else $error end)}' 2>/dev/null) || true
 
   curl -sf -X PATCH "${API_BASE_URL}/uploads/${JOB_ID}" \
     -H "Authorization: Bearer ${SERVICE_TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "$body" || log "WARN: API status report failed (status=${status})"
+    -d "$body" 2>/dev/null || true
 }
 
 # ── Helper: select 3 unique random newsgroups from pool ──────────

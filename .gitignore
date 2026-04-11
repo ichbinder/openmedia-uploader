@@ -4,3 +4,10 @@ tmp/
 *.7z
 *.par2
 .env
+tests/sabnzbd-config/admin/
+tests/sabnzbd-config/logs/
+tests/sabnzbd-downloads/
+tests/tmp-roundtrip/
+tests/test-roundtrip.*
+*.bin
+sabnzbd.ini.bak

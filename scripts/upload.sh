@@ -70,7 +70,7 @@ report_status() {
   body=$(jq -n --arg status "$status" --arg error "$error" \
     '{status: $status, error: (if $error == "" then null else $error end)}')
 
-  curl -sf -X PATCH "${API_BASE_URL}/upload-jobs/${JOB_ID}" \
+  curl -sf -X PATCH "${API_BASE_URL}/uploads/${JOB_ID}" \
     -H "Authorization: Bearer ${SERVICE_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$body" || log "WARN: API status report failed (status=${status})"
@@ -156,7 +156,12 @@ upload_to_provider() {
   log "  Group: ${group}"
   log "  NZB:   ${nzb_path}"
 
-  # Generate Nyuu JSON config (obfuscation requires config, not CLI)
+  # Generate Nyuu JSON config
+  # NOTE: Nyuu does NOT support an "obfuscate" config key — it is silently ignored.
+  # Real obfuscation is achieved via "subject" and "yenc-name" with ${rand(N)} tokens,
+  # which randomize article subjects and yEnc filenames on Usenet.
+  # "nzb-subject" preserves the original filename in the NZB file itself (only visible
+  # to NZB holders, not to public indexers).
   cat > "$conf_path" << CONF
 {
   "host": "${host}",
@@ -167,7 +172,9 @@ upload_to_provider() {
   "connections": ${conns},
   "groups": "${group}",
   "from": "${poster_email}",
-  "obfuscate": {"method": "uuid"},
+  "subject": "\${rand(20)}",
+  "yenc-name": "\${rand(15)}",
+  "nzb-subject": "[{filenum}/{files}] - \"{filename}\" yEnc ({part}/{parts}) {filesize}",
   "out": "${nzb_path}",
   "overwrite": true,
   "nzb-password": "${password}",
@@ -373,7 +380,7 @@ main() {
     '{status: $status, nzbHash: $nzbHash} + (if $movieId != "" then {movieId: $movieId} else {} end)'
   )
 
-  curl -sf -X PATCH "${API_BASE_URL}/upload-jobs/${JOB_ID}" \
+  curl -sf -X PATCH "${API_BASE_URL}/uploads/${JOB_ID}" \
     -H "Authorization: Bearer ${SERVICE_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "$patch_body" || log "WARN: API completion callback failed"

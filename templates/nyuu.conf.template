@@ -29,9 +29,10 @@
     }
   ],
   "from": "{{POSTER_NAME}}",
-  "obfuscate": {
-    "method": "uuid"
-  },
+  "_comment_obfuscation": "Nyuu does NOT support an 'obfuscate' config key — it is silently ignored. Real obfuscation uses 'subject' and 'yenc-name' with ${rand(N)} tokens. 'nzb-subject' preserves the original filename in the NZB for NZB holders.",
+  "subject": "${rand(20)}",
+  "yenc-name": "${rand(15)}",
+  "nzb-subject": "[{filenum}/{files}] - \"{filename}\" yEnc ({part}/{parts}) {filesize}",
   "nzb": {
     "output": "{{NZB_OUTPUT_PATH}}",
     "compression": true

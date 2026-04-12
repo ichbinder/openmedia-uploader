@@ -115,18 +115,30 @@ upload_nzb_to_nzb_service() {
 
   log "Uploading NZB to NZB-Service: ${upload_url}"
   local http_code
-  http_code=$(curl -sf -o /dev/null -w "%{http_code}" -X PUT \
-    -H "Authorization: Bearer ${NZB_SERVICE_TOKEN}" \
-    -H "Content-Type: application/octet-stream" \
-    --data-binary "@${nzb_file}" \
-    "${upload_url}" 2>/dev/null) || true
+  local attempt
+  local max_attempts=3
 
-  if [[ "$http_code" == "201" ]]; then
-    log "NZB uploaded to NZB-Service: ${nzb_hash}"
-  else
-    log "WARN: NZB-Service upload returned HTTP ${http_code} (expected 201)"
-    # Non-fatal — NZB is still available locally, API can still record the hash
-  fi
+  for attempt in 1 2 3; do
+    http_code=$(curl -sf -o /dev/null -w "%{http_code}" -X PUT \
+      -H "Authorization: Bearer ${NZB_SERVICE_TOKEN}" \
+      -H "Content-Type: application/octet-stream" \
+      --data-binary "@${nzb_file}" \
+      "${upload_url}" 2>/dev/null) || true
+
+    if [[ "$http_code" == "200" || "$http_code" == "201" ]]; then
+      log "NZB uploaded to NZB-Service: ${nzb_hash}"
+      break
+    fi
+
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      log "WARN: NZB-Service upload attempt ${attempt}/${max_attempts} returned HTTP ${http_code} — retrying in 5s"
+      sleep 5
+    else
+      log "ERROR: NZB-Service upload failed after ${max_attempts} attempts (last HTTP ${http_code})"
+      log "ERROR: NZB file will be LOST when VPS is deleted — aborting upload"
+      die "NZB-Service upload failed after ${max_attempts} attempts (HTTP ${http_code})"
+    fi
+  done
 
   # Return hash via global variable (not stdout — stdout would mix with log lines
   # when called from command substitution)

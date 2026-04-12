@@ -55,7 +55,7 @@ validate_env() {
     JOB_HASH S3_KEY API_BASE_URL SERVICE_TOKEN
     S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY
     NZB_SERVICE_URL NZB_SERVICE_TOKEN
-    USENET_HOST_1 USENET_HOST_2 USENET_HOST_3
+    USENET_HOST_1 USENET_HOST_2
   )
   for var in "${required[@]}"; do
     if [[ -z "${!var:-}" ]]; then die "Missing required ENV: $var"; fi
@@ -232,9 +232,9 @@ main() {
   password=$(generate_password)
   log "Generated password: (hidden)"
 
-  local group1 group2 group3
-  read -r group1 group2 group3 < <(select_newsgroups)
-  log "Newsgroups: ${group1} / ${group2} / ${group3}"
+  local group1 group2
+  read -r group1 group2 < <(select_newsgroups)
+  log "Newsgroups: ${group1} / ${group2}"
 
   local poster_name="${POSTER_NAME:-$(generate_uuid)}"
   log "Poster name: ${poster_name}"
@@ -296,11 +296,11 @@ main() {
   local providers_ok=0
   local providers_failed=0
 
-  log "Starting Nyuu uploads to 3 providers (parallel)"
+  log "Starting Nyuu uploads to 2 providers (parallel)"
 
-  # Run all 3 providers in parallel
-  local pid1 pid2 pid3
-  local exit1=0 exit2=0 exit3=0
+  # Run both providers in parallel
+  local pid1 pid2
+  local exit1=0 exit2=0
 
   upload_to_provider 1 \
     "${USENET_HOST_1}" "${USENET_PORT_1:-563}" \
@@ -316,26 +316,17 @@ main() {
     "$group2" "$password" "$part_dir" "$JOB_HASH" &
   pid2=$!
 
-  upload_to_provider 3 \
-    "${USENET_HOST_3}" "${USENET_PORT_3:-563}" \
-    "${USENET_USER_3}" "${USENET_PASS_3}" \
-    "${USENET_SSL_3:-1}" "${USENET_CONNS_3:-20}" \
-    "$group3" "$password" "$part_dir" "$JOB_HASH" &
-  pid3=$!
-
-  # Wait for all 3 and capture exit codes
+  # Wait for both and capture exit codes
   wait "$pid1" || exit1=$?
   wait "$pid2" || exit2=$?
-  wait "$pid3" || exit3=$?
 
   [[ $exit1 -eq 0 ]] && providers_ok=$((providers_ok + 1)) || providers_failed=$((providers_failed + 1))
   [[ $exit2 -eq 0 ]] && providers_ok=$((providers_ok + 1)) || providers_failed=$((providers_failed + 1))
-  [[ $exit3 -eq 0 ]] && providers_ok=$((providers_ok + 1)) || providers_failed=$((providers_failed + 1))
 
   log "Upload results: ${providers_ok} succeeded, ${providers_failed} failed"
 
   if [[ $providers_ok -eq 0 ]]; then
-    die "All 3 providers failed. Upload cannot proceed."
+    die "All providers failed. Upload cannot proceed."
   fi
 
   # ── Step 5: Combine NZBs into one ──────────────────────────────
@@ -344,9 +335,6 @@ main() {
   local primary_nzb="${part_dir}/${JOB_HASH}_provider1.nzb"
   if [[ ! -f "$primary_nzb" ]]; then
     primary_nzb="${part_dir}/${JOB_HASH}_provider2.nzb"
-  fi
-  if [[ ! -f "$primary_nzb" ]]; then
-    primary_nzb="${part_dir}/${JOB_HASH}_provider3.nzb"
   fi
   if [[ ! -f "$primary_nzb" ]]; then
     die "No NZB file found after uploads"

@@ -303,9 +303,9 @@ main() {
     "${USENET_USER_1}" "${USENET_PASS_1}" \
     "${USENET_SSL_1:-1}" "${USENET_CONNS_1:-10}" \
     "$group1" "$password" "$part_dir" "$JOB_HASH"; then
-    ((providers_ok++))
+    providers_ok=$((providers_ok + 1))
   else
-    ((providers_failed++))
+    providers_failed=$((providers_failed + 1))
   fi
 
   # Provider 2
@@ -314,9 +314,9 @@ main() {
     "${USENET_USER_2}" "${USENET_PASS_2}" \
     "${USENET_SSL_2:-1}" "${USENET_CONNS_2:-10}" \
     "$group2" "$password" "$part_dir" "$JOB_HASH"; then
-    ((providers_ok++))
+    providers_ok=$((providers_ok + 1))
   else
-    ((providers_failed++))
+    providers_failed=$((providers_failed + 1))
   fi
 
   # Provider 3
@@ -325,9 +325,9 @@ main() {
     "${USENET_USER_3}" "${USENET_PASS_3}" \
     "${USENET_SSL_3:-1}" "${USENET_CONNS_3:-10}" \
     "$group3" "$password" "$part_dir" "$JOB_HASH"; then
-    ((providers_ok++))
+    providers_ok=$((providers_ok + 1))
   else
-    ((providers_failed++))
+    providers_failed=$((providers_failed + 1))
   fi
 
   log "Upload results: ${providers_ok} succeeded, ${providers_failed} failed"

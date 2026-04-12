@@ -17,15 +17,6 @@
       "ssl": {{USENET_SSL_2}},
       "connections": {{USENET_CONNS_2}},
       "group": "{{USENET_GROUP_2}}"
-    },
-    {
-      "host": "{{USENET_HOST_3}}",
-      "port": {{USENET_PORT_3}},
-      "user": "{{USENET_USER_3}}",
-      "password": "{{USENET_PASS_3}}",
-      "ssl": {{USENET_SSL_3}},
-      "connections": {{USENET_CONNS_3}},
-      "group": "{{USENET_GROUP_3}}"
     }
   ],
   "from": "{{POSTER_NAME}}",

@@ -58,7 +58,7 @@ validate_env() {
     USENET_HOST_1 USENET_HOST_2 USENET_HOST_3
   )
   for var in "${required[@]}"; do
-    [[ -z "${!var:-}" ]] && die "Missing required ENV: $var"
+    if [[ -z "${!var:-}" ]]; then die "Missing required ENV: $var"; fi
   done
 }
 

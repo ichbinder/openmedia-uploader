@@ -295,40 +295,41 @@ main() {
   local providers_ok=0
   local providers_failed=0
 
-  log "Starting Nyuu uploads to 3 providers"
+  log "Starting Nyuu uploads to 3 providers (parallel)"
 
-  # Provider 1
-  if upload_to_provider 1 \
+  # Run all 3 providers in parallel
+  local pid1 pid2 pid3
+  local exit1=0 exit2=0 exit3=0
+
+  upload_to_provider 1 \
     "${USENET_HOST_1}" "${USENET_PORT_1:-563}" \
     "${USENET_USER_1}" "${USENET_PASS_1}" \
-    "${USENET_SSL_1:-1}" "${USENET_CONNS_1:-10}" \
-    "$group1" "$password" "$part_dir" "$JOB_HASH"; then
-    providers_ok=$((providers_ok + 1))
-  else
-    providers_failed=$((providers_failed + 1))
-  fi
+    "${USENET_SSL_1:-1}" "${USENET_CONNS_1:-20}" \
+    "$group1" "$password" "$part_dir" "$JOB_HASH" &
+  pid1=$!
 
-  # Provider 2
-  if upload_to_provider 2 \
+  upload_to_provider 2 \
     "${USENET_HOST_2}" "${USENET_PORT_2:-563}" \
     "${USENET_USER_2}" "${USENET_PASS_2}" \
-    "${USENET_SSL_2:-1}" "${USENET_CONNS_2:-10}" \
-    "$group2" "$password" "$part_dir" "$JOB_HASH"; then
-    providers_ok=$((providers_ok + 1))
-  else
-    providers_failed=$((providers_failed + 1))
-  fi
+    "${USENET_SSL_2:-1}" "${USENET_CONNS_2:-20}" \
+    "$group2" "$password" "$part_dir" "$JOB_HASH" &
+  pid2=$!
 
-  # Provider 3
-  if upload_to_provider 3 \
+  upload_to_provider 3 \
     "${USENET_HOST_3}" "${USENET_PORT_3:-563}" \
     "${USENET_USER_3}" "${USENET_PASS_3}" \
-    "${USENET_SSL_3:-1}" "${USENET_CONNS_3:-10}" \
-    "$group3" "$password" "$part_dir" "$JOB_HASH"; then
-    providers_ok=$((providers_ok + 1))
-  else
-    providers_failed=$((providers_failed + 1))
-  fi
+    "${USENET_SSL_3:-1}" "${USENET_CONNS_3:-20}" \
+    "$group3" "$password" "$part_dir" "$JOB_HASH" &
+  pid3=$!
+
+  # Wait for all 3 and capture exit codes
+  wait "$pid1" || exit1=$?
+  wait "$pid2" || exit2=$?
+  wait "$pid3" || exit3=$?
+
+  [[ $exit1 -eq 0 ]] && providers_ok=$((providers_ok + 1)) || providers_failed=$((providers_failed + 1))
+  [[ $exit2 -eq 0 ]] && providers_ok=$((providers_ok + 1)) || providers_failed=$((providers_failed + 1))
+  [[ $exit3 -eq 0 ]] && providers_ok=$((providers_ok + 1)) || providers_failed=$((providers_failed + 1))
 
   log "Upload results: ${providers_ok} succeeded, ${providers_failed} failed"
 

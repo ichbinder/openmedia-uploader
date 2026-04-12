@@ -115,7 +115,7 @@ upload_nzb_to_nzb_service() {
 
   log "Uploading NZB to NZB-Service: ${upload_url}"
   local http_code
-  http_code=$(curl -sf -w "%{http_code}" -X PUT \
+  http_code=$(curl -sf -o /dev/null -w "%{http_code}" -X PUT \
     -H "Authorization: Bearer ${NZB_SERVICE_TOKEN}" \
     -H "Content-Type: application/octet-stream" \
     --data-binary "@${nzb_file}" \
@@ -128,7 +128,9 @@ upload_nzb_to_nzb_service() {
     # Non-fatal — NZB is still available locally, API can still record the hash
   fi
 
-  echo "$nzb_hash"
+  # Return hash via global variable (not stdout — stdout would mix with log lines
+  # when called from command substitution)
+  NZB_HASH_RESULT="$nzb_hash"
 }
 
 # ── Helper: upload to one provider via Nyuu ──────────────────────
@@ -351,8 +353,8 @@ main() {
   log "Primary NZB: ${nzb_path} (${nzb_size} bytes)"
 
   # ── Step 6: Hash NZB and upload to NZB-Service ─────────────────
-  local nzb_hash
-  nzb_hash=$(upload_nzb_to_nzb_service "$nzb_path")
+  upload_nzb_to_nzb_service "$nzb_path"
+  local nzb_hash="$NZB_HASH_RESULT"
 
   # ── Step 7: Report completion to API ───────────────────────────
   local elapsed=$(( $(date +%s) - start_time ))
@@ -386,7 +388,6 @@ main() {
 
   log "=========================================="
   log "Upload completed successfully"
-  log "NZB Hash: ${nzb_hash}"
   log "Movie ID: ${movie_id:-none}"
   log "Parts:    ${part_count}"
   log "Providers: ${providers_ok}/${providers_failed}"

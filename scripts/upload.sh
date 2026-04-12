@@ -4,7 +4,7 @@
 #
 # Streams MKV from S3 via mkfifo, splits into 7z parts with
 # header encryption, generates 30% PAR2, uploads via Nyuu to
-# all 3 providers. Each provider gets its own nyuu run + NZB.
+# both providers. Each provider gets its own nyuu run + NZB.
 # Final combined NZB is uploaded to S3.
 #
 # ENV Variables (required):
@@ -19,12 +19,12 @@
 #   S3_SECRET_KEY          S3 secret key
 #   NZB_SERVICE_URL        NZB-Service base URL (e.g. https://nzb.nettoken.de)
 #   NZB_SERVICE_TOKEN      NZB-Service JWT token
-#   USENET_HOST_1/2/3      Usenet server hostnames
-#   USENET_PORT_1/2/3      Usenet server ports
-#   USENET_USER_1/2/3      Usenet usernames
-#   USENET_PASS_1/2/3      Usenet passwords
-#   USENET_SSL_1/2/3       Use SSL (1/0)
-#   USENET_CONNS_1/2/3     Connections per provider
+#   USENET_HOST_1/2        Usenet server hostnames
+#   USENET_PORT_1/2        Usenet server ports
+#   USENET_USER_1/2        Usenet usernames
+#   USENET_PASS_1/2        Usenet passwords
+#   USENET_SSL_1/2         Use SSL (1/0)
+#   USENET_CONNS_1/2       Connections per provider
 #   POSTER_NAME            Poster name in NNTP headers
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -76,15 +76,15 @@ report_status() {
     -d "$body" 2>/dev/null || true
 }
 
-# ── Helper: select 3 unique random newsgroups from pool ──────────
+# ── Helper: select 2 unique random newsgroups from pool ──────────
 select_newsgroups() {
   local indices
-  indices=$(shuf -i 0-$((${#NEWSGROUP_POOL[@]}-1)) -n 3)
+  indices=$(shuf -i 0-$((${#NEWSGROUP_POOL[@]}-1)) -n 2)
   local groups=()
   for i in $indices; do
     groups+=("${NEWSGROUP_POOL[$i]}")
   done
-  echo "${groups[0]}" "${groups[1]}" "${groups[2]}"
+  echo "${groups[0]}" "${groups[1]}"
 }
 
 # ── Helper: generate random password ─────────────────────────────
@@ -292,7 +292,7 @@ main() {
   par2_count=$(find "$part_dir" -name "${JOB_HASH}.par2" -o -name "${JOB_HASH}.vol*.par2" | wc -l)
   log "PAR2 done: ${par2_count} files"
 
-  # ── Step 4: Upload to all 3 providers ──────────────────────────
+  # ── Step 4: Upload to both providers ───────────────────────────
   local providers_ok=0
   local providers_failed=0
 
@@ -331,7 +331,7 @@ main() {
 
   # ── Step 5: Combine NZBs into one ──────────────────────────────
   # Take the first successful provider's NZB as the primary.
-  # All 3 have the same file list (just different servers/groups).
+  # Both have the same file list (just different servers/groups).
   local primary_nzb="${part_dir}/${JOB_HASH}_provider1.nzb"
   if [[ ! -f "$primary_nzb" ]]; then
     primary_nzb="${part_dir}/${JOB_HASH}_provider2.nzb"

@@ -133,10 +133,10 @@ TMPDIR="/opt/openmedia/tmp"
 
 select_newsgroups() {
   local indices
-  indices=$(shuf -i 0-$((${#NEWSGROUP_POOL[@]}-1)) -n 3)
+  indices=$(shuf -i 0-$((${#NEWSGROUP_POOL[@]}-1)) -n 2)
   local groups=()
   for i in $indices; do groups+=("${NEWSGROUP_POOL[$i]}"); done
-  echo "${groups[0]}" "${groups[1]}" "${groups[2]}"
+  echo "${groups[0]}" "${groups[1]}"
 }
 
 NEWSGROUP_POOL=(
@@ -216,13 +216,13 @@ CONF
   return 0
 }
 
-# ── Upload to all 3 providers ──────────────────────────────────
-group1="" group2="" group3=""
-read -r group1 group2 group3 < <(select_newsgroups)
-log "Newsgroups: ${group1} / ${group2} / ${group3}"
+# ── Upload to both providers ───────────────────────────────────
+group1="" group2=""
+read -r group1 group2 < <(select_newsgroups)
+log "Newsgroups: ${group1} / ${group2}"
 
 providers_ok=0
-for p in 1 2 3; do
+for p in 1 2; do
   host_var="USENET_HOST_${p}"; port_var="USENET_PORT_${p:-563}"
   user_var="USENET_USER_${p}"; pass_var="USENET_PASS_${p}"
   ssl_var="USENET_SSL_${p:-1}"; conns_var="USENET_CONNS_${p:-10}"
@@ -235,11 +235,11 @@ for p in 1 2 3; do
   fi
 done
 
-log "Upload results: ${providers_ok}/3 providers succeeded"
+log "Upload results: ${providers_ok}/2 providers succeeded"
 [[ $providers_ok -eq 0 ]] && die "All providers failed"
 
 # Copy the first successful NZB as primary
-for p in 1 2 3; do
+for p in 1 2; do
   nzb="${part_dir}/${JOB_HASH}_provider${p}.nzb"
   if [[ -f "$nzb" ]]; then
     cp "$nzb" "${part_dir}/${JOB_HASH}.nzb"
@@ -280,12 +280,6 @@ UPLOAD_EOF
     -e "USENET_PASS_2=${USENET_PASS_2}" \
     -e "USENET_SSL_2=${USENET_SSL_2:-1}" \
     -e "USENET_CONNS_2=${USENET_CONNS_2:-10}" \
-    -e "USENET_HOST_3=${USENET_HOST_3}" \
-    -e "USENET_PORT_3=${USENET_PORT_3:-563}" \
-    -e "USENET_USER_3=${USENET_USER_3}" \
-    -e "USENET_PASS_3=${USENET_PASS_3}" \
-    -e "USENET_SSL_3=${USENET_SSL_3:-1}" \
-    -e "USENET_CONNS_3=${USENET_CONNS_3:-10}" \
     -v "$TEST_FILE:/data/test-roundtrip.bin:ro" \
     -v "$TEST_UPLOAD_SCRIPT:/opt/openmedia/upload-test.sh:ro" \
     -v "$NZB_OUTPUT_DIR:/opt/openmedia/tmp" \
@@ -617,7 +611,7 @@ fi)
 - Upload image: openmedia-uploader:roundtrip-test (rebuilt with T01 obfuscation fix)
 - SABnzbd: lscr.io/linuxserver/sabnzbd:latest
 - S3 bypass: test file mounted directly (no S3 dependency for this test)
-- Providers: EasyUsenet, Eweka, Newshosting
+- Providers: EasyUsenet (Abavia), Eweka (Omicron)
 EOF
 
 log "Results written to $RESULTS_FILE"

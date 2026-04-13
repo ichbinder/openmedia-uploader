@@ -15,7 +15,8 @@ RUN apk add --no-cache \
     bash \
     coreutils \
     xxd \
-    openssl
+    openssl \
+    ffmpeg
 
 # ── Install Nyuu (usenet binary poster) ────────────────────────
 # Nyuu needs Python + build-base for the yencode native module compilation.

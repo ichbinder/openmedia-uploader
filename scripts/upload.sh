@@ -97,6 +97,165 @@ generate_uuid() {
   cat /proc/sys/kernel/random/uuid 2>/dev/null || openssl rand -hex 16
 }
 
+# ── Helper: extract media metadata via ffprobe ─────────────────
+# Streams the MKV from S3 and runs ffprobe to extract video/audio/subtitle info.
+# Sets global variables: METADATA_JSON (full ffprobe output) and individual fields.
+extract_metadata() {
+  log "Extracting media metadata via ffprobe"
+
+  local probe_json
+  probe_json=$(rclone cat ":s3:${S3_BUCKET}/${S3_KEY}" \
+    --s3-provider "Other" \
+    --s3-endpoint "${S3_ENDPOINT}" \
+    --s3-access-key-id "${S3_ACCESS_KEY}" \
+    --s3-secret-access-key "${S3_SECRET_KEY}" \
+    2>/dev/null | ffprobe -v quiet -print_format json -show_format -show_streams -i pipe:0 2>/dev/null) || {
+    log "WARN: ffprobe metadata extraction failed — continuing without metadata"
+    METADATA_JSON=""
+    return 0
+  }
+
+  METADATA_JSON="$probe_json"
+
+  # ── Video stream (first video track) ──
+  META_VIDEO_WIDTH=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].width // empty')
+  META_VIDEO_HEIGHT=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].height // empty')
+  META_VIDEO_CODEC=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].codec_name // empty')
+  META_VIDEO_BITRATE=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].bit_rate // empty')
+  META_VIDEO_FRAMERATE=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].r_frame_rate // empty')
+  META_VIDEO_PIX_FMT=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].pix_fmt // empty')
+  META_VIDEO_PROFILE=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].profile // empty')
+
+  # Color depth from pix_fmt (e.g. yuv420p10le → 10, yuv420p → 8)
+  META_VIDEO_COLOR_DEPTH=8
+  if [[ "$META_VIDEO_PIX_FMT" =~ 10le|10be|p010 ]]; then
+    META_VIDEO_COLOR_DEPTH=10
+  elif [[ "$META_VIDEO_PIX_FMT" =~ 12le|12be ]]; then
+    META_VIDEO_COLOR_DEPTH=12
+  fi
+
+  # HDR detection: check for HDR side data or bt2020 color space
+  local color_transfer color_primaries
+  color_transfer=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].color_transfer // empty')
+  color_primaries=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="video")][0].color_primaries // empty')
+
+  META_HDR=false
+  META_HDR_FORMAT=""
+  if [[ "$color_transfer" == "smpte2084" || "$color_transfer" == "arib-std-b67" ]]; then
+    META_HDR=true
+    if [[ "$color_transfer" == "smpte2084" ]]; then
+      # Check side_data for Dolby Vision
+      local has_dv
+      has_dv=$(echo "$probe_json" | jq '[.streams[] | select(.codec_type=="video")][0].side_data_list // [] | any(.side_data_type == "DOVI configuration record")') 2>/dev/null || has_dv="false"
+      if [[ "$has_dv" == "true" ]]; then
+        META_HDR_FORMAT="Dolby Vision"
+      else
+        META_HDR_FORMAT="HDR10"
+      fi
+    elif [[ "$color_transfer" == "arib-std-b67" ]]; then
+      META_HDR_FORMAT="HLG"
+    fi
+  fi
+
+  # Framerate: convert fraction to decimal (e.g. 24000/1001 → 23.976)
+  META_VIDEO_FRAMERATE_DEC=""
+  if [[ "$META_VIDEO_FRAMERATE" =~ ^([0-9]+)/([0-9]+)$ ]]; then
+    local num="${BASH_REMATCH[1]}"
+    local den="${BASH_REMATCH[2]}"
+    if [[ "$den" -gt 0 ]]; then
+      META_VIDEO_FRAMERATE_DEC=$(awk "BEGIN {printf \"%.3f\", $num/$den}")
+    fi
+  elif [[ -n "$META_VIDEO_FRAMERATE" ]]; then
+    META_VIDEO_FRAMERATE_DEC="$META_VIDEO_FRAMERATE"
+  fi
+
+  # Video bitrate: convert to kbps (ffprobe gives bps)
+  META_VIDEO_BITRATE_KBPS=""
+  if [[ -n "$META_VIDEO_BITRATE" && "$META_VIDEO_BITRATE" != "N/A" ]]; then
+    META_VIDEO_BITRATE_KBPS=$(( META_VIDEO_BITRATE / 1000 ))
+  fi
+
+  # ── Quality tier from height ──
+  META_QUALITY_TIER=""
+  if [[ -n "$META_VIDEO_HEIGHT" ]]; then
+    local h="$META_VIDEO_HEIGHT"
+    if [[ $h -le 480 ]]; then
+      META_QUALITY_TIER="480p"
+    elif [[ $h -le 720 ]]; then
+      META_QUALITY_TIER="720p"
+    elif [[ $h -le 1080 ]]; then
+      META_QUALITY_TIER="1080p"
+    else
+      META_QUALITY_TIER="2160p"
+    fi
+  fi
+
+  # ── Audio streams ──
+  META_AUDIO_CODEC=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="audio")][0].codec_name // empty')
+  META_AUDIO_CHANNELS=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="audio")][0].channels // empty')
+  META_AUDIO_BITRATE=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="audio")][0].bit_rate // empty')
+
+  # Audio channel layout string (2→"2.0", 6→"5.1", 8→"7.1")
+  META_AUDIO_CHANNELS_STR=""
+  case "$META_AUDIO_CHANNELS" in
+    1) META_AUDIO_CHANNELS_STR="1.0" ;;
+    2) META_AUDIO_CHANNELS_STR="2.0" ;;
+    6) META_AUDIO_CHANNELS_STR="5.1" ;;
+    8) META_AUDIO_CHANNELS_STR="7.1" ;;
+    *) META_AUDIO_CHANNELS_STR="${META_AUDIO_CHANNELS}.0" ;;
+  esac
+
+  META_AUDIO_BITRATE_KBPS=""
+  if [[ -n "$META_AUDIO_BITRATE" && "$META_AUDIO_BITRATE" != "N/A" ]]; then
+    META_AUDIO_BITRATE_KBPS=$(( META_AUDIO_BITRATE / 1000 ))
+  fi
+
+  # Audio languages from all audio streams
+  META_AUDIO_LANGUAGES=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="audio") | .tags.language // empty] | unique | join(",")')
+
+  # ── Subtitle languages ──
+  META_SUBTITLE_LANGUAGES=$(echo "$probe_json" | jq -r '[.streams[] | select(.codec_type=="subtitle") | .tags.language // empty] | unique | join(",")')
+
+  # ── Duration (seconds) ──
+  META_DURATION=$(echo "$probe_json" | jq -r '.format.duration // empty')
+  META_DURATION_INT=""
+  if [[ -n "$META_DURATION" ]]; then
+    META_DURATION_INT=$(awk "BEGIN {printf \"%d\", $META_DURATION}")
+  fi
+
+  # ── File size (bytes) ──
+  META_FILE_SIZE=$(echo "$probe_json" | jq -r '.format.size // empty')
+
+  # Normalized video codec name for DB
+  META_VIDEO_CODEC_NORMALIZED=""
+  case "$META_VIDEO_CODEC" in
+    hevc|h265) META_VIDEO_CODEC_NORMALIZED="x265" ;;
+    h264|avc) META_VIDEO_CODEC_NORMALIZED="x264" ;;
+    av1) META_VIDEO_CODEC_NORMALIZED="AV1" ;;
+    mpeg4) META_VIDEO_CODEC_NORMALIZED="XviD" ;;
+    *) META_VIDEO_CODEC_NORMALIZED="$META_VIDEO_CODEC" ;;
+  esac
+
+  # Normalized audio codec name
+  META_AUDIO_CODEC_NORMALIZED=""
+  case "$META_AUDIO_CODEC" in
+    aac) META_AUDIO_CODEC_NORMALIZED="AAC" ;;
+    ac3) META_AUDIO_CODEC_NORMALIZED="AC3" ;;
+    eac3) META_AUDIO_CODEC_NORMALIZED="EAC3" ;;
+    dts) META_AUDIO_CODEC_NORMALIZED="DTS" ;;
+    truehd) META_AUDIO_CODEC_NORMALIZED="TrueHD" ;;
+    flac) META_AUDIO_CODEC_NORMALIZED="FLAC" ;;
+    opus) META_AUDIO_CODEC_NORMALIZED="Opus" ;;
+    *) META_AUDIO_CODEC_NORMALIZED="$META_AUDIO_CODEC" ;;
+  esac
+
+  log "Metadata: ${META_VIDEO_WIDTH}x${META_VIDEO_HEIGHT} ${META_VIDEO_CODEC_NORMALIZED} ${META_QUALITY_TIER}"
+  log "  Video: ${META_VIDEO_BITRATE_KBPS:-?}kbps ${META_VIDEO_FRAMERATE_DEC:-?}fps ${META_VIDEO_COLOR_DEPTH}bit HDR=${META_HDR}"
+  log "  Audio: ${META_AUDIO_CODEC_NORMALIZED} ${META_AUDIO_CHANNELS_STR} ${META_AUDIO_BITRATE_KBPS:-?}kbps lang=${META_AUDIO_LANGUAGES}"
+  log "  Subs:  ${META_SUBTITLE_LANGUAGES:-none}"
+  log "  Duration: ${META_DURATION_INT:-?}s  Size: ${META_FILE_SIZE:-?} bytes"
+}
+
 # ── Helper: hash NZB and upload to NZB-Service ──────────────────
 # Calculates sha256 hash of the NZB file, then uploads it to the
 # NZB-Service (openmedia-nzb) via HTTP PUT.
@@ -256,6 +415,9 @@ main() {
   local part_dir="${TMPDIR}/${JOB_HASH}"
   mkdir -p "$part_dir"
 
+  # ── Step 1.5: Extract media metadata via ffprobe ─────────────
+  extract_metadata
+
   # ── Step 2: S3 → mkfifo → 7z (stream pipeline) ───────────────
   local mkv_pipe="${part_dir}/mkv.fifo"
   mkfifo "$mkv_pipe"
@@ -372,16 +534,65 @@ main() {
   local elapsed=$(( $(date +%s) - start_time ))
   log "Total upload time: ${elapsed}s"
 
-  # PATCH /uploads/:id with nzbHash and movieId (if available)
+  # PATCH /uploads/:id with nzbHash, movieId, and media metadata.
   # movieId comes from the UploadJob — it tells the API which Movie
   # to link the new NzbFile entry to.
   local movie_id="${MOVIE_ID:-}"
   local patch_body
+
+  # Build metadata object (only non-empty fields)
+  local metadata_json="{}"
+  if [[ -n "$METADATA_JSON" ]]; then
+    metadata_json=$(jq -n \
+      --arg qualityTier "${META_QUALITY_TIER:-}" \
+      --argjson videoWidth "${META_VIDEO_WIDTH:-null}" \
+      --argjson videoHeight "${META_VIDEO_HEIGHT:-null}" \
+      --arg codec "${META_VIDEO_CODEC_NORMALIZED:-}" \
+      --arg videoBitrate "${META_VIDEO_BITRATE_KBPS:-}" \
+      --arg videoFramerate "${META_VIDEO_FRAMERATE_DEC:-}" \
+      --argjson videoColorDepth "${META_VIDEO_COLOR_DEPTH:-null}" \
+      --argjson hdr "${META_HDR:-false}" \
+      --arg hdrFormat "${META_HDR_FORMAT:-}" \
+      --arg audioCodec "${META_AUDIO_CODEC_NORMALIZED:-}" \
+      --arg audioChannels "${META_AUDIO_CHANNELS_STR:-}" \
+      --arg audioBitrate "${META_AUDIO_BITRATE_KBPS:-}" \
+      --arg audioLanguages "${META_AUDIO_LANGUAGES:-}" \
+      --arg subtitleLanguages "${META_SUBTITLE_LANGUAGES:-}" \
+      --arg duration "${META_DURATION_INT:-}" \
+      --arg fileSize "${META_FILE_SIZE:-}" \
+      --arg resolution "${META_QUALITY_TIER:-}" \
+      --argjson mediaInfo "$METADATA_JSON" \
+      '{} |
+        (if $qualityTier != "" then . + {qualityTier: $qualityTier} else . end) |
+        (if $videoWidth != null then . + {videoWidth: $videoWidth} else . end) |
+        (if $videoHeight != null then . + {videoHeight: $videoHeight} else . end) |
+        (if $codec != "" then . + {codec: $codec} else . end) |
+        (if $videoBitrate != "" then . + {videoBitrate: ($videoBitrate | tonumber)} else . end) |
+        (if $videoFramerate != "" then . + {videoFramerate: $videoFramerate} else . end) |
+        (if $videoColorDepth != null then . + {videoColorDepth: $videoColorDepth} else . end) |
+        (if $hdr then . + {hdr: $hdr} else . end) |
+        (if $hdrFormat != "" then . + {hdrFormat: $hdrFormat} else . end) |
+        (if $audioCodec != "" then . + {audioCodec: $audioCodec} else . end) |
+        (if $audioChannels != "" then . + {audioChannels: $audioChannels} else . end) |
+        (if $audioBitrate != "" then . + {audioBitrate: ($audioBitrate | tonumber)} else . end) |
+        (if $audioLanguages != "" then . + {audioLanguages: ($audioLanguages | split(","))} else . end) |
+        (if $subtitleLanguages != "" then . + {subtitleLanguages: ($subtitleLanguages | split(","))} else . end) |
+        (if $duration != "" then . + {duration: ($duration | tonumber)} else . end) |
+        (if $fileSize != "" then . + {fileSize: ($fileSize | tonumber)} else . end) |
+        (if $resolution != "" then . + {resolution: $resolution} else . end) |
+        . + {mediaInfo: $mediaInfo}
+      '
+    ) || metadata_json="{}"
+  fi
+
   patch_body=$(jq -n \
     --arg status "completed" \
     --arg nzbHash "$nzb_hash" \
     --arg movieId "$movie_id" \
-    '{status: $status, nzbHash: $nzbHash} + (if $movieId != "" then {movieId: $movieId} else {} end)'
+    --argjson metadata "$metadata_json" \
+    '{status: $status, nzbHash: $nzbHash} +
+     (if $movieId != "" then {movieId: $movieId} else {} end) +
+     (if $metadata != {} then {metadata: $metadata} else {} end)'
   )
 
   curl -sf -X PATCH "${API_BASE_URL}/uploads/${JOB_ID}" \

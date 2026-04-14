@@ -104,11 +104,15 @@ extract_metadata() {
   log "Extracting media metadata via ffprobe"
 
   local probe_json
+  # Stream only first 50MB from S3 — enough for ffprobe to read container headers.
+  # Without --head, rclone streams the entire multi-GB MKV; when ffprobe exits
+  # after parsing headers, rclone gets SIGPIPE → non-zero exit under pipefail.
   probe_json=$(rclone cat ":s3:${S3_BUCKET}/${S3_KEY}" \
     --s3-provider "Other" \
     --s3-endpoint "${S3_ENDPOINT}" \
     --s3-access-key-id "${S3_ACCESS_KEY}" \
     --s3-secret-access-key "${S3_SECRET_KEY}" \
+    --head 52428800 \
     2>/dev/null | ffprobe -v quiet -print_format json -show_format -show_streams -i pipe:0 2>/dev/null) || {
     log "WARN: ffprobe metadata extraction failed — continuing without metadata"
     METADATA_JSON=""
@@ -198,6 +202,7 @@ extract_metadata() {
   # Audio channel layout string (2→"2.0", 6→"5.1", 8→"7.1")
   META_AUDIO_CHANNELS_STR=""
   case "$META_AUDIO_CHANNELS" in
+    "") META_AUDIO_CHANNELS_STR="" ;;
     1) META_AUDIO_CHANNELS_STR="1.0" ;;
     2) META_AUDIO_CHANNELS_STR="2.0" ;;
     6) META_AUDIO_CHANNELS_STR="5.1" ;;
@@ -223,8 +228,17 @@ extract_metadata() {
     META_DURATION_INT=$(awk "BEGIN {printf \"%d\", $META_DURATION}")
   fi
 
-  # ── File size (bytes) ──
-  META_FILE_SIZE=$(echo "$probe_json" | jq -r '.format.size // empty')
+  # ── File size (bytes) — from S3 metadata, not ffprobe ──
+  # ffprobe only sees the --head 50MB chunk, so its format.size is wrong.
+  META_FILE_SIZE=$(rclone size ":s3:${S3_BUCKET}/${S3_KEY}" \
+    --s3-provider "Other" \
+    --s3-endpoint "${S3_ENDPOINT}" \
+    --s3-access-key-id "${S3_ACCESS_KEY}" \
+    --s3-secret-access-key "${S3_SECRET_KEY}" \
+    --json 2>/dev/null | jq -r '.bytes // empty' || true)
+  if [[ -z "$META_FILE_SIZE" ]]; then
+    META_FILE_SIZE=$(echo "$probe_json" | jq -r '.format.size // empty')
+  fi
 
   # Normalized video codec name for DB
   META_VIDEO_CODEC_NORMALIZED=""
@@ -580,7 +594,7 @@ main() {
         (if $duration != "" then . + {duration: ($duration | tonumber)} else . end) |
         (if $fileSize != "" then . + {fileSize: ($fileSize | tonumber)} else . end) |
         (if $resolution != "" then . + {resolution: $resolution} else . end) |
-        . + {mediaInfo: $mediaInfo}
+        . + {mediaInfo: (if $fileSize != "" then ($mediaInfo | .format.size = $fileSize) else $mediaInfo end)}
       '
     ) || metadata_json="{}"
   fi

@@ -107,17 +107,32 @@ extract_metadata() {
   # Stream only first 50MB from S3 — enough for ffprobe to read container headers.
   # Without --head, rclone streams the entire multi-GB MKV; when ffprobe exits
   # after parsing headers, rclone gets SIGPIPE → non-zero exit under pipefail.
+  # Verify ffprobe is available (apk del --purge can remove it on ARM)
+  if ! command -v ffprobe &>/dev/null; then
+    log "WARN: ffprobe not found in PATH — skipping metadata extraction"
+    METADATA_JSON=""
+    return 0
+  fi
+
+  local rclone_err ffprobe_err
+  rclone_err=$(mktemp)
+  ffprobe_err=$(mktemp)
+
   probe_json=$(rclone cat ":s3:${S3_BUCKET}/${S3_KEY}" \
     --s3-provider "Other" \
     --s3-endpoint "${S3_ENDPOINT}" \
     --s3-access-key-id "${S3_ACCESS_KEY}" \
     --s3-secret-access-key "${S3_SECRET_KEY}" \
     --head 52428800 \
-    2>/dev/null | ffprobe -v quiet -print_format json -show_format -show_streams -i pipe:0 2>/dev/null) || {
+    2>"$rclone_err" | ffprobe -v error -print_format json -show_format -show_streams -i pipe:0 2>"$ffprobe_err") || {
     log "WARN: ffprobe metadata extraction failed — continuing without metadata"
+    log "  rclone stderr: $(cat "$rclone_err" | head -3)"
+    log "  ffprobe stderr: $(cat "$ffprobe_err" | head -3)"
+    rm -f "$rclone_err" "$ffprobe_err"
     METADATA_JSON=""
     return 0
   }
+  rm -f "$rclone_err" "$ffprobe_err"
 
   METADATA_JSON="$probe_json"
 

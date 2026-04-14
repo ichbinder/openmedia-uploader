@@ -103,21 +103,59 @@ generate_uuid() {
 extract_metadata() {
   log "Extracting media metadata via ffprobe"
 
+  # Verify ffprobe is available (apk del --purge can remove it on ARM)
+  if ! command -v ffprobe &>/dev/null; then
+    log "WARN: ffprobe not found in PATH — skipping metadata extraction"
+    METADATA_JSON=""
+    return 0
+  fi
+
   local probe_json
-  # Stream only first 50MB from S3 — enough for ffprobe to read container headers.
-  # Without --head, rclone streams the entire multi-GB MKV; when ffprobe exits
-  # after parsing headers, rclone gets SIGPIPE → non-zero exit under pipefail.
-  probe_json=$(rclone cat ":s3:${S3_BUCKET}/${S3_KEY}" \
+  local rclone_err ffprobe_err
+  rclone_err=$(mktemp)
+  ffprobe_err=$(mktemp)
+
+  # Stream first 50MB from S3 — enough for ffprobe to read container headers.
+  # Write to a temp file to avoid SIGPIPE when ffprobe exits before rclone finishes.
+  local probe_file
+  probe_file=$(mktemp /tmp/ffprobe-head-XXXXXX)
+
+  log "Downloading first 50MB from S3 for ffprobe analysis..."
+  if ! rclone cat ":s3:${S3_BUCKET}/${S3_KEY}" \
     --s3-provider "Other" \
     --s3-endpoint "${S3_ENDPOINT}" \
     --s3-access-key-id "${S3_ACCESS_KEY}" \
     --s3-secret-access-key "${S3_SECRET_KEY}" \
     --head 52428800 \
-    2>/dev/null | ffprobe -v quiet -print_format json -show_format -show_streams -i pipe:0 2>/dev/null) || {
-    log "WARN: ffprobe metadata extraction failed — continuing without metadata"
+    2>"$rclone_err" > "$probe_file"; then
+    log "WARN: rclone download for ffprobe failed — continuing without metadata"
+    log "  rclone stderr: $(head -3 "$rclone_err")"
+    rm -f "$rclone_err" "$ffprobe_err" "$probe_file"
+    METADATA_JSON=""
+    return 0
+  fi
+
+  local probe_size
+  probe_size=$(stat -c%s "$probe_file" 2>/dev/null || stat -f%z "$probe_file" 2>/dev/null || echo "0")
+  log "ffprobe input: ${probe_size} bytes"
+
+  probe_json=$(ffprobe -v error -print_format json -show_format -show_streams "$probe_file" 2>"$ffprobe_err") || {
+    log "WARN: ffprobe analysis failed — continuing without metadata"
+    log "  ffprobe stderr: $(head -3 "$ffprobe_err")"
+    rm -f "$rclone_err" "$ffprobe_err" "$probe_file"
     METADATA_JSON=""
     return 0
   }
+  rm -f "$rclone_err" "$ffprobe_err" "$probe_file"
+
+  # Validate that ffprobe produced actual JSON (not empty output)
+  if [[ -z "$probe_json" ]] || ! echo "$probe_json" | jq -e '.streams' &>/dev/null; then
+    log "WARN: ffprobe produced empty or invalid JSON — skipping metadata"
+    METADATA_JSON=""
+    return 0
+  fi
+
+  log "ffprobe OK: $(echo "$probe_json" | jq -r '[.streams[] | .codec_type + ":" + .codec_name] | join(", ")')"
 
   METADATA_JSON="$probe_json"
 

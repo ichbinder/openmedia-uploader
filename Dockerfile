@@ -21,9 +21,14 @@ RUN apk add --no-cache \
 # ── Install Nyuu (usenet binary poster) ────────────────────────
 # Nyuu needs Python + build-base for the yencode native module compilation.
 # Install build deps, compile Nyuu, then remove build deps to keep image small.
+# IMPORTANT: --purge removes transitive dependencies and nukes ffmpeg on ARM.
+# Reinstall ffmpeg after cleanup to guarantee ffprobe is available.
 RUN apk add --no-cache python3 make g++ \
  && npm install -g nyuu --production \
  && apk del --no-network --purge python3 make g++ 2>/dev/null; true
+
+# Reinstall ffmpeg — apk del --purge above can remove it as a transitive dep on ARM
+RUN apk add --no-cache ffmpeg
 
 # ── Create working directory ────────────────────────────────────
 RUN mkdir -p /opt/openmedia/tmp

@@ -29,6 +29,15 @@
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# ── Bootstrap: fetch config from API if running in 3-var mode ────
+API_ENV_FILE="/opt/openmedia/api-env.sh"
+if [[ ! -f "$API_ENV_FILE" ]] && [[ -n "${API_BASE_URL:-}" ]] && [[ -n "${SERVICE_TOKEN:-}" ]] && [[ -n "${JOB_ID:-}" ]]; then
+  /opt/openmedia/00-fetch-config.sh
+fi
+if [[ -f "$API_ENV_FILE" ]]; then
+  source "$API_ENV_FILE"
+fi
+
 # ── Constants ────────────────────────────────────────────────────
 PART_SIZE="250m"
 PAR2_REDUNDANCY="30"

@@ -33,6 +33,10 @@ RUN apk add --no-cache ffmpeg
 # ── Create working directory ────────────────────────────────────
 RUN mkdir -p /opt/openmedia/tmp
 
+# ── Bootstrap script: fetches config from API at boot ────────────
+COPY scripts/00-fetch-config.sh /opt/openmedia/00-fetch-config.sh
+RUN chmod +x /opt/openmedia/00-fetch-config.sh
+
 # ── Entrypoint script: the upload pipeline ──────────────────────
 COPY scripts/upload.sh /opt/openmedia/upload.sh
 RUN chmod +x /opt/openmedia/upload.sh

@@ -48,24 +48,33 @@ while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
   echo "[openmedia] Bootstrap attempt ${ATTEMPT}/${MAX_ATTEMPTS}..."
 
   # Capture response body and HTTP status separately
-  RESPONSE=$(curl -sf -w "\n%{http_code}" \
+  # Note: -s (silent) but NOT -f, so we always get the response body + status
+  RESPONSE=$(curl -s -w "\n%{http_code}" \
     -H "Authorization: Bearer ${SERVICE_TOKEN}" \
     -H "Accept: application/json" \
     "${BOOTSTRAP_URL}" 2>/dev/null) && {
     HTTP_STATUS=$(echo "${RESPONSE}" | tail -1)
     RESPONSE=$(echo "${RESPONSE}" | sed '$d')
-
-    if [ "${HTTP_STATUS}" = "200" ]; then
-      echo "[openmedia] Bootstrap API responded 200 OK"
-      break
+  } || {
+    # curl itself failed (DNS, connection refused, timeout)
+    HTTP_STATUS=$(echo "${RESPONSE}" | tail -1)
+    RESPONSE=$(echo "${RESPONSE}" | sed '$d')
+    if [ -z "${HTTP_STATUS}" ] || ! [[ "${HTTP_STATUS}" =~ ^[0-9]+$ ]]; then
+      HTTP_STATUS="000"
     fi
+  }
 
+  if [ "${HTTP_STATUS}" = "200" ]; then
+    echo "[openmedia] Bootstrap API responded 200 OK"
+    break
+  fi
+
+  if [ "${HTTP_STATUS}" = "000" ]; then
+    echo "[openmedia] ERROR: curl failed (API unreachable or connection error)"
+  else
     echo "[openmedia] ERROR: Bootstrap API returned HTTP ${HTTP_STATUS}"
     echo "[openmedia] Response: ${RESPONSE}"
-  } || {
-    echo "[openmedia] ERROR: curl failed (API unreachable or connection error)"
-    HTTP_STATUS="000"
-  }
+  fi
 
   if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
     echo "[openmedia] Retrying in ${RETRY_DELAY}s..."
@@ -117,18 +126,26 @@ done
 echo "[openmedia] Writing config to ${API_ENV_FILE}"
 mkdir -p "$(dirname "${API_ENV_FILE}")"
 
-(umask 077; cat > "${API_ENV_FILE}" << EOF
-export JOB_HASH="${JOB_HASH}"
-export S3_KEY="${S3_KEY}"
-export MOVIE_ID="${MOVIE_ID}"
-export S3_ACCESS_KEY="${S3_ACCESS_KEY}"
-export S3_SECRET_KEY="${S3_SECRET_KEY}"
-export S3_ENDPOINT="${S3_ENDPOINT}"
-export S3_BUCKET="${S3_BUCKET}"
-export NZB_SERVICE_URL="${NZB_SERVICE_URL}"
-export NZB_SERVICE_TOKEN="${NZB_SERVICE_TOKEN}"
-EOF
-)
+TMP_ENV_FILE="$(mktemp "$(dirname "${API_ENV_FILE}")/.api-env.sh.XXXXXX")"
+trap 'rm -f "${TMP_ENV_FILE}"' EXIT
+chmod 600 "${TMP_ENV_FILE}"
+
+# Use printf %q to safely escape values for sourcing (handles $, !, quotes, etc.)
+append_export() {
+  local key="$1"
+  local value="$2"
+  printf 'export %s=%q\n' "${key}" "${value}" >> "${TMP_ENV_FILE}"
+}
+
+append_export JOB_HASH "${JOB_HASH}"
+append_export S3_KEY "${S3_KEY}"
+append_export MOVIE_ID "${MOVIE_ID}"
+append_export S3_ACCESS_KEY "${S3_ACCESS_KEY}"
+append_export S3_SECRET_KEY "${S3_SECRET_KEY}"
+append_export S3_ENDPOINT "${S3_ENDPOINT}"
+append_export S3_BUCKET "${S3_BUCKET}"
+append_export NZB_SERVICE_URL "${NZB_SERVICE_URL}"
+append_export NZB_SERVICE_TOKEN "${NZB_SERVICE_TOKEN}"
 
 # Flatten usenet providers array into numbered ENV vars
 for i in $(seq 0 $((USENET_PROVIDER_COUNT - 1))); do
@@ -140,15 +157,26 @@ for i in $(seq 0 $((USENET_PROVIDER_COUNT - 1))); do
   SSL=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].ssl")
   CONNS=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].connections")
 
-  cat >> "${API_ENV_FILE}" << EOF
-export USENET_HOST_${N}="${HOST}"
-export USENET_PORT_${N}="${PORT}"
-export USENET_USER_${N}="${USER}"
-export USENET_PASS_${N}="${PASS}"
-export USENET_SSL_${N}="${SSL}"
-export USENET_CONNS_${N}="${CONNS}"
-EOF
+  # Validate required provider fields
+  if [ -z "${HOST}" ] || [ "${HOST}" = "null" ]; then
+    echo "[openmedia] WARN: Provider ${N} has no host — skipping"
+    continue
+  fi
+  if [ -z "${USER}" ] || [ "${USER}" = "null" ]; then
+    echo "[openmedia] WARN: Provider ${N} has no username — skipping"
+    continue
+  fi
+
+  append_export "USENET_HOST_${N}" "${HOST}"
+  append_export "USENET_PORT_${N}" "${PORT}"
+  append_export "USENET_USER_${N}" "${USER}"
+  append_export "USENET_PASS_${N}" "${PASS}"
+  append_export "USENET_SSL_${N}" "${SSL}"
+  append_export "USENET_CONNS_${N}" "${CONNS}"
 done
+
+mv -f "${TMP_ENV_FILE}" "${API_ENV_FILE}"
+trap - EXIT
 
 echo "[openmedia] Config-pull complete"
 echo "[openmedia]   Job Hash:  ${JOB_HASH:0:16}..."

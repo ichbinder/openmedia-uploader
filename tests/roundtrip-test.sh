@@ -199,8 +199,9 @@ upload_to_provider() {
   "out": "${nzb_path}",
   "overwrite": true,
   "nzb-password": "${pw}",
-  "check-connections": ${conns},
-  "check-tries": 3
+  "check-connections": 0,
+  "ssl-ciphers": "AES128-GCM-SHA256",
+  "post-chunk-size": 0
 }
 CONF
 

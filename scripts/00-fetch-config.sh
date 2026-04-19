@@ -147,9 +147,9 @@ append_export S3_BUCKET "${S3_BUCKET}"
 append_export NZB_SERVICE_URL "${NZB_SERVICE_URL}"
 append_export NZB_SERVICE_TOKEN "${NZB_SERVICE_TOKEN}"
 
-# Flatten usenet providers array into numbered ENV vars
+# Flatten usenet providers array into numbered ENV vars (contiguous numbering)
+VALID_PROVIDER_COUNT=0
 for i in $(seq 0 $((USENET_PROVIDER_COUNT - 1))); do
-  N=$((i + 1))
   HOST=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].host")
   PORT=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].port")
   USER=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].username")
@@ -159,21 +159,28 @@ for i in $(seq 0 $((USENET_PROVIDER_COUNT - 1))); do
 
   # Validate required provider fields
   if [ -z "${HOST}" ] || [ "${HOST}" = "null" ]; then
-    echo "[openmedia] WARN: Provider ${N} has no host — skipping"
+    echo "[openmedia] WARN: Provider $((i + 1)) has no host — skipping"
     continue
   fi
   if [ -z "${USER}" ] || [ "${USER}" = "null" ]; then
-    echo "[openmedia] WARN: Provider ${N} has no username — skipping"
+    echo "[openmedia] WARN: Provider $((i + 1)) has no username — skipping"
     continue
   fi
 
-  append_export "USENET_HOST_${N}" "${HOST}"
-  append_export "USENET_PORT_${N}" "${PORT}"
-  append_export "USENET_USER_${N}" "${USER}"
-  append_export "USENET_PASS_${N}" "${PASS}"
-  append_export "USENET_SSL_${N}" "${SSL}"
-  append_export "USENET_CONNS_${N}" "${CONNS}"
+  VALID_PROVIDER_COUNT=$((VALID_PROVIDER_COUNT + 1))
+  append_export "USENET_HOST_${VALID_PROVIDER_COUNT}" "${HOST}"
+  append_export "USENET_PORT_${VALID_PROVIDER_COUNT}" "${PORT}"
+  append_export "USENET_USER_${VALID_PROVIDER_COUNT}" "${USER}"
+  append_export "USENET_PASS_${VALID_PROVIDER_COUNT}" "${PASS}"
+  append_export "USENET_SSL_${VALID_PROVIDER_COUNT}" "${SSL}"
+  append_export "USENET_CONNS_${VALID_PROVIDER_COUNT}" "${CONNS}"
 done
+
+if [ "${VALID_PROVIDER_COUNT}" -eq 0 ]; then
+  echo "[openmedia] FATAL: No valid usenet providers after validation"
+  rm -f "${TMP_ENV_FILE}"
+  exit 1
+fi
 
 mv -f "${TMP_ENV_FILE}" "${API_ENV_FILE}"
 trap - EXIT

@@ -49,7 +49,7 @@ while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
 
   # Capture response body and HTTP status separately
   # Note: -s (silent) but NOT -f, so we always get the response body + status
-  RESPONSE=$(curl -s -w "\n%{http_code}" \
+  RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" \
     -H "Authorization: Bearer ${SERVICE_TOKEN}" \
     -H "Accept: application/json" \
     "${BOOTSTRAP_URL}" 2>/dev/null) && {
@@ -73,7 +73,11 @@ while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
     echo "[openmedia] ERROR: curl failed (API unreachable or connection error)"
   else
     echo "[openmedia] ERROR: Bootstrap API returned HTTP ${HTTP_STATUS}"
-    echo "[openmedia] Response: ${RESPONSE}"
+    # Extract error field only — avoid logging full response which may contain credentials
+    ERROR_MSG=$(echo "${RESPONSE}" | jq -r '.error // empty' 2>/dev/null)
+    if [ -n "${ERROR_MSG}" ]; then
+      echo "[openmedia] Error: ${ERROR_MSG}"
+    fi
   fi
 
   if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then

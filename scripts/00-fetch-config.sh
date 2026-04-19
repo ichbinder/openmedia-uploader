@@ -84,7 +84,7 @@ fi
 #   { "job": { "id", "hash", "s3Key", "movieId" },
 #     "config": { "s3AccessKey", "s3SecretKey", "s3Endpoint", "s3Bucket",
 #                 "nzbServiceUrl", "nzbServiceToken",
-#                 "usenetProviders": [{ "host", "port", "user", "pass", "ssl", "connections" }, ...] } }
+#                 "usenetProviders": [{ "host", "port", "username", "password", "ssl", "connections" }, ...] } }
 
 JOB_HASH=$(echo "${RESPONSE}" | jq -r '.job.hash')
 S3_KEY=$(echo "${RESPONSE}" | jq -r '.job.s3Key')
@@ -135,8 +135,8 @@ for i in $(seq 0 $((USENET_PROVIDER_COUNT - 1))); do
   N=$((i + 1))
   HOST=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].host")
   PORT=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].port")
-  USER=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].user")
-  PASS=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].pass")
+  USER=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].username")
+  PASS=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].password")
   SSL=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].ssl")
   CONNS=$(echo "${RESPONSE}" | jq -r ".config.usenetProviders[$i].connections")
 
